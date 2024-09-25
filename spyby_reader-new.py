@@ -9,44 +9,59 @@ cursor = conn.cursor()
 # Create the table if it doesn't exist
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS chatlog (
-        id TEXT PRIMARY KEY,
+        id TEXT NOT NULL,
         username TEXT NOT NULL,
         message TEXT NOT NULL,
-        sent BOOLEAN NOT NULL
+        destination_channel_id TEXT NOT NULL,
+        sent BOOLEAN NOT NULL,
+        PRIMARY KEY (id, destination_channel_id)
+    )
+''')
+
+# Create the channel_mappings table if it doesn't exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS channel_mappings (
+        target_channel_id TEXT NOT NULL,
+        authToken TEXT NOT NULL,
+        destination_channel_id TEXT NOT NULL
     )
 ''')
 conn.commit()
 
-def fetch_messages():
+def fetch_messages(target_channel_id, authToken):
     try:
         headers = {
-            'Authorization': 'Discord Token'
+            'Authorization': f'{authToken}'
         }
-        response = requests.get('https://discord.com/api/v9/channels/1204030142939144224/messages?limit=50', headers=headers)
+        response = requests.get(
+            f'https://discord.com/api/v9/channels/{target_channel_id}/messages?limit=5',
+            headers=headers
+        )
         response.raise_for_status()  # Raise an exception for HTTP errors
         messages = response.json()
-        print('Got new messages')
+        print(f'Got new messages from channel {target_channel_id}')
         return messages
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching messages: {e}")
+        print(f"Error fetching messages from channel {target_channel_id}: {e}")
         return []
 
-def insert_message(message_id, username, content):
+def insert_message(message_id, username, content, destination_channel_id):
     try:
         cursor.execute('''
-            INSERT INTO chatlog (id, username, message, sent)
-            VALUES (?, ?, ?, ?)
-        ''', (message_id, username, content, False))
+            INSERT INTO chatlog (id, username, message, sent, destination_channel_id)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (message_id, username, content, False, destination_channel_id))
         conn.commit()
     except sqlite3.IntegrityError:
-        # Message ID already exists in the database
+        # Message ID and destination_channel_id already exist in the database
         pass
 
-def message_exists(message_id):
-    cursor.execute('SELECT 1 FROM chatlog WHERE id = ?', (message_id,))
+
+def message_exists(message_id, destination_channel_id):
+    cursor.execute('SELECT 1 FROM chatlog WHERE id = ? AND destination_channel_id = ?', (message_id, destination_channel_id))
     return cursor.fetchone() is not None
 
-def process_messages(messages):
+def process_messages(messages, authToken, destination_channel_id):
     for message in messages:
         message_id = message.get('id')
         content = message.get('content')
@@ -54,14 +69,19 @@ def process_messages(messages):
         username = author.get('username')
 
         if message_id and content is not None and username:
-            if not message_exists(message_id):
-                insert_message(message_id, username, content)
+            if not message_exists(message_id, destination_channel_id):
+                insert_message(message_id, username, content, destination_channel_id)
 
 def main():
     try:
         while True:
-            messages = fetch_messages()
-            process_messages(messages)
+            # Fetch all mappings from the channel_mappings table
+            cursor.execute('SELECT target_channel_id, authToken, destination_channel_id FROM channel_mappings')
+            mappings = cursor.fetchall()
+            for mapping in mappings:
+                target_channel_id, authToken, destination_channel_id = mapping
+                messages = fetch_messages(target_channel_id, authToken)
+                process_messages(messages, authToken, destination_channel_id)
             time.sleep(5)
     except KeyboardInterrupt:
         conn.close()
