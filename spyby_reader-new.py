@@ -14,6 +14,8 @@ cursor.execute('''
         message TEXT NOT NULL,
         destination_channel_id TEXT NOT NULL,
         sent BOOLEAN NOT NULL,
+        avatar TEXT,
+        user_id TEXT,
         PRIMARY KEY (id, destination_channel_id)
     )
 ''')
@@ -45,12 +47,12 @@ def fetch_messages(target_channel_id, authToken):
         print(f"Error fetching messages from channel {target_channel_id}: {e}")
         return []
 
-def insert_message(message_id, username, content, destination_channel_id):
+def insert_message(message_id, username, content, destination_channel_id, avatar, user_id):
     try:
         cursor.execute('''
-            INSERT INTO chatlog (id, username, message, sent, destination_channel_id)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (message_id, username, content, False, destination_channel_id))
+            INSERT INTO chatlog (id, username, message, sent, destination_channel_id, avatar, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (message_id, username, content, False, destination_channel_id, avatar, user_id))
         conn.commit()
     except sqlite3.IntegrityError:
         # Message ID and destination_channel_id already exist in the database
@@ -66,11 +68,13 @@ def process_messages(messages, authToken, destination_channel_id):
         message_id = message.get('id')
         content = message.get('content')
         author = message.get('author', {})
-        username = author.get('username')
+        username = author.get('global_name')
+        avatar = author.get('avatar')
+        user_id = author.get('id')
 
         if message_id and content is not None and username:
             if not message_exists(message_id, destination_channel_id):
-                insert_message(message_id, username, content, destination_channel_id)
+                insert_message(message_id, username, content, destination_channel_id, avatar, user_id)
 
 def main():
     try:
